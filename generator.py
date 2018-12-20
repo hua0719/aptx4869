@@ -2,16 +2,11 @@ import tensorflow as tf
 from ops import *
 
 
-batch_size = 4
-z_dim = 16
+
 # class Generator(object, input):
 #     def __init__(self):
 #         self.H, self.W = 112, 80 # Width/Height for ISLES2015 dataset
 #         self.input = input
-
-
-
-
 
 
 

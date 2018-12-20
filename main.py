@@ -9,7 +9,7 @@ from utils import *
 import scipy.misc
 
 
-modelname= 'Auto_eGAN_SegAN2'
+modelname= 'Auto2_eGAN_attenSegAN'
 batch_size = 2
 epoch = 20000
 input_height = 224
@@ -91,7 +91,7 @@ class edGAN(object):
         # output of D for real images
         D_real, D_real_logits, _, scale_real = d_model(x=self.targetmod, is_training=True, reuse=False)
 
-        # output of D for fake images
+        # output of D for fake imagesmn
         # encoding
         G_encode1 = encoder(self.inputmod1, modality='T1', is_training=True, reuse=False)             # 8*224*160*16
         G_encode2 = encoder(self.inputmod2, modality='T2', is_training=True, reuse=False)
