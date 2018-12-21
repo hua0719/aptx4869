@@ -1,6 +1,6 @@
 import tensorflow as tf
+from tensorflow.contrib import slim
 from ops import *
-
 
 
 # class Generator(object, input):
@@ -8,9 +8,139 @@ from ops import *
 #         self.H, self.W = 112, 80 # Width/Height for ISLES2015 dataset
 #         self.input = input
 
+def Upsampling(inputs, scale):
+    return tf.image.resize_bilinear(inputs, size=[tf.shape(inputs)[1]*scale,  tf.shape(inputs)[2]*scale])
+
+
+def RCU(input, name):
+    c = input.get_shape().as_list()[3]
+    conv1 = conv2d(input, k_size=3, input_c=c, output_c=c, strides=1, padding="SAME", name=name+'_conv1')
+    act1 = tf.nn.leaky_relu(conv1, name=name+'_act1')
+
+    conv2 = conv2d(act1, k_size=3, input_c=c, output_c=c, strides=1, padding="SAME", name=name+'_conv2')
+    act2 = tf.nn.leaky_relu(conv2, name=name + '_act2')
+    return  tf.add(input, act2)
+
+
+def MultiResolutionFusion(high_inputs=None, low_inputs=None):
+    n_filters = low_inputs.get_shape().as_list()[3]
+    if high_inputs is None: # RefineNet block 4
+
+        fuse = slim.conv2d(low_inputs, n_filters, 3, activation_fn=None)
+
+        return fuse
+
+    else:
+
+        conv_low = slim.conv2d(low_inputs, n_filters, 3, activation_fn=None)
+        conv_high = slim.conv2d(high_inputs, n_filters, 3, activation_fn=None)
+
+        conv_low_up = Upsampling(conv_low, 2)
+
+        return tf.add(conv_low_up, conv_high)
+
+
+def ChainedResidualPooling(inputs):
+    """
+    Chained residual pooling aims to capture background
+    context from a large image region. This component is
+    built as a chain of 2 pooling blocks, each consisting
+    of one max-pooling layer and one convolution layer. One pooling
+    block takes the output of the previous pooling block as
+    input. The output feature maps of all pooling blocks are
+    fused together with the input feature map through summation
+    of residual connections.
+    Arguments:
+      inputs: The input tensor
+      n_filters: Number of output feature maps for each conv
+    Returns:
+      Double-pooled feature maps
+    """
+    n_filters = inputs.get_shape().as_list()[3]
+    net_relu = tf.nn.relu(inputs)
+    net = slim.max_pool2d(net_relu, [5, 5], stride=1, padding='SAME')
+    net = slim.conv2d(net, n_filters, 3, activation_fn=None)
+    net_sum_1 = tf.add(net, net_relu)
+
+    net = slim.max_pool2d(net, [5, 5], stride=1, padding='SAME')
+    net = slim.conv2d(net, n_filters, 3, activation_fn=None)
+    net_sum_2 = tf.add(net, net_sum_1)
+
+    return net_sum_2
+
+
+def refinenet(high_inputs=None,low_inputs=None, name=None):
+    if low_inputs is None: # block 4
+        rcu_new_low = RCU(high_inputs, name=name+'rcu1')
+        rcu_new_low = RCU(rcu_new_low, name=name+ 'rcu2')
+
+        fuse = MultiResolutionFusion(high_inputs=None, low_inputs=rcu_new_low)
+        fuse_pooling = ChainedResidualPooling(fuse)
+        output = RCU(fuse_pooling, name=name+'rcu3')
+        return output
+    else:
+        rcu_high = RCU(high_inputs, name=name+'rcu4')
+        rcu_high = RCU(rcu_high, name=name+'rcu5')
+
+        fuse = MultiResolutionFusion(rcu_high, low_inputs)
+        fuse_pooling = ChainedResidualPooling(fuse)
+        output = RCU(fuse_pooling, name=name+'rcu6')
+        return output
 
 
 def encoder(input, modality, is_training = True, reuse=False):
+    intput_c = input.get_shape().as_list()[3]
+    with tf.variable_scope("generator_encoder" + modality, reuse=reuse):
+        #
+        # # 卷积核1[3, 3, 1, 32]
+        # filter1 = tf.Variable(tf.random_normal([3, 3, 1, 32]))
+        # # 卷积核2[3, 3, 32, 32]
+        # filter2 = tf.Variable(tf.random_normal([3, 3, 32, 32]))
+
+        # block 1
+        conv1 = bn(conv2d(input, k_size=3, input_c=intput_c, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b1_conv1'),
+                   is_training=is_training,  scope='g_enc_bn1')
+        act1 = tf.nn.leaky_relu(conv1, name='g_enc_' + 'block1_act1')
+        conv2 = bn(conv2d(act1, k_size=3, input_c=32, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b1_conv2'),
+                   is_training=is_training, scope='g_enc_bn2')
+        act2 = tf.nn.leaky_relu(conv2, name='g_enc_' + 'block1_act2')
+
+        pool1 = tf.nn.max_pool(act2, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],  padding="VALID", name='g_enc_' + 'pool1')
+
+        # block 2
+        conv3 = bn(conv2d(pool1, k_size=3, input_c=32, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b2_conv1'),
+                   is_training=is_training, scope='g_enc_bn3')
+        act3 = tf.nn.leaky_relu(conv3, name='g_enc_' + 'block2_act1')
+        conv4 = bn(conv2d(act3, k_size=3, input_c=32, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b2_conv2'),
+                   is_training=is_training, scope='g_enc_bn4')
+        act4 = tf.nn.leaky_relu(conv4, name='g_enc_' + 'block2_act2')
+
+
+        pool2 = tf.nn.max_pool(act4, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding="VALID", name='g_enc_' + 'pool2')
+
+        # block 3
+        conv5 = bn(conv2d(pool2, k_size=3, input_c=32, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b3_conv1'),
+                   is_training=is_training, scope='g_enc_bn5')
+        act5 = tf.nn.leaky_relu(conv5, name='g_enc_' + 'block3_act1')
+        conv6 = bn(conv2d(act5, k_size=3, input_c=32, output_c=32, strides=1, padding="SAME", name='g_enc_' + 'b3_conv2'),
+                   is_training=is_training, scope='g_enc_bn6')
+        act6 = tf.nn.leaky_relu(conv6, name='g_enc_' + 'block3_act2')
+
+        refi1 = refinenet(high_inputs=act6, low_inputs=None, name='refi1')
+        refi2 = refinenet(high_inputs=act4, low_inputs=refi1, name='refi2')
+        refi3 = refinenet(high_inputs=act2, low_inputs=refi2, name='refi3')
+
+        conv7= bn(conv2d(refi3, k_size=3, input_c=32, output_c=16, strides=1, padding="SAME", name='g_enc_' + 'conv7'),
+                    is_training=is_training, scope='g_enc_bn7')
+        act7 = tf.nn.leaky_relu(conv7, name='g_enc_' + 'act7')
+        return act7
+
+
+
+
+
+"""TMI原论文编码器"""
+def ORI_encoder(input, modality, is_training = True, reuse=False):
     intput_c = input.get_shape().as_list()[3]
     with tf.variable_scope("generator_encoder" + modality, reuse=reuse):
         #

@@ -9,7 +9,8 @@ from utils import *
 import scipy.misc
 
 
-modelname= 'Auto2_eGAN_attenSegAN'
+# modelname= 'Auto2_eGAN_attenSegAN'   # ACM迭代2次额外优化一次 TMI-G attention segAN-D
+modelname= 'Auto2_refiGAN_attenSegAN' # ACM迭代1次额外优化1次 TMI-G-refinet  attention segAN-D
 batch_size = 2
 epoch = 20000
 input_height = 224
@@ -51,7 +52,7 @@ class edGAN(object):
         self.disc_iters = 3  # The number of critic iterations for one-step of generator
 
         # auto parameter
-        self.auto_t = 2
+        self.auto_t = 1
 
     def build_model(self):
         # some parameters
